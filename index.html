@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SW-5 Conjunction Desk: Satellite Collision Risk Predictor</title>
+<style>
+:root{--bg:#070b16;--panel:#0e1526;--line:#223052;--tx:#e6ecf8;--mu:#8b9bc0;--cy:#5ad1ff;--am:#ffb347;--rd:#ff5d6c;--gn:#59e3a1;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:dark}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]){--bg:#eef2fa;--panel:#fff;--line:#c9d3ea;--tx:#101a33;--mu:#5a6a8e;--cy:#0a74b8;--am:#b86a00;--rd:#c8283a;--gn:#0f8a57;color-scheme:light}}
+:root[data-theme="dark"]{--bg:#070b16}
+*{box-sizing:border-box}html,body{margin:0}
+body{background:var(--bg);color:var(--tx);font:15px/1.5 "Segoe UI",system-ui,sans-serif}
+.w{max-width:1180px;margin:0 auto;padding:20px 16px 48px}
+h1{font:700 26px/1.2 Georgia,"Times New Roman",serif;margin:0 0 6px}
+h2{font:600 16px/1.3 Georgia,serif;margin:0 0 10px}
+p.s{color:var(--mu);margin:0 0 18px;max-width:75ch}
+.g{display:grid;gap:14px}.g2{grid-template-columns:320px 1fr}.g3{grid-template-columns:1fr 1fr}
+@media(max-width:860px){.g2,.g3{grid-template-columns:1fr}}
+.c{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;min-width:0}
+label{display:block;margin:12px 0 4px;font-size:13px;color:var(--mu)}label b{color:var(--tx);float:right;font-weight:600}
+select,input[type=range],button{width:100%;font:inherit}
+select{background:var(--bg);color:var(--tx);border:1px solid var(--line);border-radius:6px;padding:6px}
+input[type=range]{accent-color:var(--cy)}
+button{background:var(--cy);color:#04101c;border:0;border-radius:6px;padding:9px;font-weight:600;cursor:pointer;margin-top:10px}
+button.o{background:transparent;color:var(--tx);border:1px solid var(--line)}
+button:focus-visible,select:focus-visible,input:focus-visible,tr:focus-visible{outline:2px solid var(--am);outline-offset:2px}
+.k{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+@media(max-width:600px){.k{grid-template-columns:1fr 1fr}}
+.k div{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px}
+.k span{display:block;color:var(--mu);font-size:12px}.k strong{font-size:22px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:6px 8px;text-align:right;border-bottom:1px solid var(--line)}th:first-child,td:first-child{text-align:left}
+th{color:var(--mu);font-weight:500}
+.sc{overflow-x:auto;max-height:340px;overflow-y:auto}
+tbody tr{cursor:pointer}tbody tr:hover,tr.sel{background:rgba(90,209,255,.12)}
+canvas{width:100%;height:260px;display:block}
+.b{display:inline-block;padding:2px 9px;border-radius:99px;font-weight:600;font-size:13px}
+.m{background:var(--rd);color:#fff}.n{background:var(--gn);color:#04140d}
+.good{color:var(--gn)}.bad{color:var(--rd)}.mu{color:var(--mu)}
+.rec{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;flex:1;min-width:120px}.bar i{display:block;height:100%;background:var(--cy)}
+small{color:var(--mu)}
+</style></head><body><div class="w">
+<h1>Conjunction Desk: will this close approach turn dangerous?</h1>
+<p class="s">A model learns from the conjunction data messages (CDMs) that arrive at least a set number of days before closest approach, predicts whether the <em>final</em> collision risk will be dangerous, and recommends manoeuvre or no manoeuvre with a confidence level. Everything below runs live in your browser on simulated CDM streams, so change a setting and retrain to see the trade-offs move.</p>
+
+<div class="g g2">
+<div class="c"><h2>Controls</h2>
+<label>Dangerous means final risk above <b id="vT"></b></label>
+<select id="thr"><option value="-3">1 in 1,000 (10⁻³)</option><option value="-4" selected>1 in 10,000 (10⁻⁴, industry norm)</option><option value="-5">1 in 100,000 (10⁻⁵)</option></select>
+<label>Use only messages received ≥ <b id="vC"></b> days before closest approach</label>
+<input type="range" id="cut" min="1" max="4" step="0.5" value="2">
+<label>Class imbalance handling</label>
+<select id="bal"><option value="1">Weight rare dangerous events up</option><option value="0">None (naive training)</option></select>
+<label>Manoeuvre when model probability ≥ <b id="vP"></b></label>
+<input type="range" id="tau" min="0.02" max="0.98" step="0.01" value="0.5">
+<label>A missed danger costs this many needless manoeuvres <b id="vK"></b></label>
+<input type="range" id="cost" min="1" max="200" step="1" value="50">
+<button id="go">Retrain model</button>
+<button class="o" id="auto">Pick best threshold (train data)</button>
+<button class="o" id="seed">New simulated data</button>
+<p class="mu" style="font-size:12px;margin:12px 0 0">Time-respecting split: the model trains on the first 70% of events in time order and is scored only on the later 30%, never on the future it is predicting.</p></div>
+
+<div><div class="k" id="kp"></div>
+<div class="c"><h2>Model versus naive baseline (unseen later events)</h2><div class="sc"><table id="tb"></table></div>
+<p class="mu" style="font-size:13px;margin:10px 0 0">Baseline: “manoeuvre if the latest usable CDM already shows risk above the danger line”. It trusts noisy early estimates, which is exactly what the model learns to correct.</p></div></div></div>
+
+<div class="g g3" style="margin-top:14px">
+<div class="c"><h2>Missed dangers versus needless manoeuvres</h2><canvas id="cv1" role="img" aria-label="Trade-off between missed dangerous events and unnecessary manoeuvres across thresholds"></canvas><small>Move the threshold slider: the vertical marker shows where you are operating.</small></div>
+<div class="c"><h2>Risk history of the selected event</h2><div id="rec"></div><canvas id="cv2" role="img" aria-label="Risk estimate history for the selected event"></canvas><small>Cyan dots: CDMs the model may use. Grey dots: arrived too late. Dashed line: true final risk.</small></div></div>
+
+<div class="c" style="margin-top:14px"><h2>Event explorer (unseen later events, highest model probability first)</h2>
+<label style="display:flex;gap:8px;align-items:center;margin:0 0 8px"><input type="checkbox" id="dis" style="width:auto"> Only events where model and baseline disagree</label>
+<div class="sc"><table id="ev"><thead><tr><th>Event</th><th>Model P(danger)</th><th>Baseline</th><th>Model</th><th>Truth (final risk)</th></tr></thead><tbody></tbody></table></div></div>
+</div>
+
+<script>
+const $=i=>document.getElementById(i),css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let R,seedV=7,D=[],M=null,sel=null;
+const rng=s=>()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296};
+const gs=()=>Math.sqrt(-2*Math.log(R()+1e-12))*Math.cos(6.2832*R());
+const cl=(v,a,b)=>Math.max(a,Math.min(b,v));
+function gen(seed,N=1800){R=rng(seed);const out=[];
+ for(let i=0;i<N;i++){
+  const d=R()<.05, tl=d?-4.8+R()*2.6:Math.min(-4.5,-8+gs()*1.6);
+  const lm=4-.34*(tl+8)+gs()*.35, ls=2.3+gs()*.4, sp=1+R()*13, t0=4.5+R()*3, c=[];
+  for(let t=t0;t>0.05;t-=.22+R()*.2){
+   const sd=.35+.55*t, r=cl(tl+gs()*sd+(R()<.09?gs()*2:0),-12,-1.5);
+   c.push({t,r,m:lm+gs()*.08*t,s:ls+.05*t+gs()*.03});}
+  out.push({id:'CDM-'+String(20000+i),tl,sp,c});}
+ return out}
+function feat(e,cut){const c=e.c.filter(x=>x.t>=cut),l=c[c.length-1],f=c[0],rs=c.map(x=>x.r);
+ e.last=l.r;e.used=c.length;
+ return[l.r,Math.max(...rs),rs.reduce((a,b)=>a+b)/rs.length,(l.r-f.r)/Math.max(.3,f.t-l.t),l.m,l.s,e.sp,c.length,l.t]}
+const sg=z=>1/(1+Math.exp(-z));
+function train(X,y,w1){const n=X.length,k=X[0].length,mu=[],sd=[];
+ for(let j=0;j<k;j++){const v=X.map(r=>r[j]);const m=v.reduce((a,b)=>a+b)/n;mu.push(m);sd.push(Math.sqrt(v.reduce((a,b)=>a+(b-m)**2,0)/n)||1)}
+ const Z=X.map(r=>r.map((v,j)=>(v-mu[j])/sd[j])),pos=y.reduce((a,b)=>a+b,0),wp=w1?cl((n-pos)/Math.max(1,pos),1,40):1;
+ let w=Array(k).fill(0),b=0;
+ for(let it=0;it<500;it++){const gw=Array(k).fill(0);let gb=0,sw=0;
+  for(let i=0;i<n;i++){let z=b;for(let j=0;j<k;j++)z+=w[j]*Z[i][j];const q=y[i]?wp:1,er=(sg(z)-y[i])*q;sw+=q;for(let j=0;j<k;j++)gw[j]+=er*Z[i][j];gb+=er}
+  for(let j=0;j<k;j++)w[j]-=.6*(gw[j]/sw+.001*w[j]);b-=.6*gb/sw}
+ return{pred:r=>{let z=b;for(let j=0;j<k;j++)z+=w[j]*(r[j]-mu[j])/sd[j];return sg(z)}}}
+function conf(y,pr){let tp=0,fn=0,fp=0,tn=0;for(let i=0;i<y.length;i++){if(y[i]&&pr[i])tp++;else if(y[i])fn++;else if(pr[i])fp++;else tn++}return{tp,fn,fp,tn}}
+function fit(){const thr=+$('thr').value,cut=+$('cut').value;
+ D.forEach(e=>{e.x=feat(e,cut);e.y=e.tl>thr?1:0});
+ const s=Math.floor(D.length*.7),tr=D.slice(0,s),te=D.slice(s);
+ M={thr,tr,te,mod:train(tr.map(e=>e.x),tr.map(e=>e.y),+$('bal').value)};
+ te.forEach(e=>{e.p=M.mod.pred(e.x);e.base=e.last>thr?1:0});
+ tr.forEach(e=>{e.p=M.mod.pred(e.x);e.base=e.last>thr?1:0});
+ refresh()}
+const K=()=>+$('cost').value;
+function pct(v){return(v*100).toFixed(1)+'%'}
+function refresh(){if(!M)return;const tau=+$('tau').value;
+ $('vT').textContent='10^'+M.thr;$('vC').textContent=$('cut').value;$('vP').textContent=tau.toFixed(2);$('vK').textContent='×'+K();
+ const y=M.te.map(e=>e.y),cm=conf(y,M.te.map(e=>e.p>=tau?1:0)),cb=conf(y,M.te.map(e=>e.base)),P=cm.tp+cm.fn;
+ const cost=c=>c.fn*K()+c.fp,rc=c=>c.tp+c.fn?c.tp/(c.tp+c.fn):0,pr=c=>c.tp+c.fp?c.tp/(c.tp+c.fp):0;
+ const sav=cost(cb)?1-cost(cm)/cost(cb):0;
+ $('kp').innerHTML=`<div><span>Dangerous events in test set</span><strong>${P} <small>of ${y.length}</small></strong></div>
+ <div><span>Dangers caught (recall)</span><strong class="${rc(cm)>=rc(cb)?'good':'bad'}">${pct(rc(cm))}</strong></div>
+ <div><span>Needless manoeuvres</span><strong>${cm.fp}</strong></div>
+ <div><span>Total cost vs baseline</span><strong class="${sav>=0?'good':'bad'}">${sav>=0?'−':'+'}${Math.abs(sav*100).toFixed(0)}%</strong></div>`;
+ const row=(n,c)=>`<tr><td>${n}</td><td class="${c.fn?'bad':'good'}">${c.fn}</td><td>${c.fp}</td><td>${c.tp}</td><td>${pct(rc(c))}</td><td>${pct(pr(c))}</td><td><b>${cost(c)}</b></td></tr>`;
+ $('tb').innerHTML=`<thead><tr><th></th><th>Missed dangers</th><th>Needless manoeuvres</th><th>Caught</th><th>Recall</th><th>Precision</th><th>Cost</th></tr></thead><tbody style="cursor:default">${row('ML model',cm)}${row('Baseline',cb)}</tbody>`;
+ sweep(tau);list()}
+function sweep(tau){const cv=$('cv1'),g=setup(cv),W=cv.clientWidth,H=260,y=M.te.map(e=>e.y),pts=[];
+ let mx=1;for(let t=.02;t<=.98;t+=.02){const c=conf(y,M.te.map(e=>e.p>=t?1:0));pts.push([t,c.fn,c.fp]);mx=Math.max(mx,c.fn,c.fp)}
+ const X=t=>36+(W-50)*(t-.02)/.96,Y=v=>H-24-(H-40)*v/mx;axes(g,W,H);
+ [[1,css('--rd')],[2,css('--cy')]].forEach(([k,col])=>{g.beginPath();pts.forEach((p,i)=>i?g.lineTo(X(p[0]),Y(p[k])):g.moveTo(X(p[0]),Y(p[k])));g.strokeStyle=col;g.lineWidth=2;g.stroke()});
+ g.strokeStyle=css('--am');g.beginPath();g.moveTo(X(tau),8);g.lineTo(X(tau),H-24);g.stroke();
+ g.fillStyle=css('--rd');g.fillText('missed dangers',44,16);g.fillStyle=css('--cy');g.fillText('needless manoeuvres',140,16);
+ g.fillStyle=css('--mu');g.fillText('threshold 0→1',W/2-30,H-6);g.fillText(mx,6,18)}
+function setup(cv){const r=devicePixelRatio||1,w=cv.clientWidth;cv.width=w*r;cv.height=260*r;const g=cv.getContext('2d');g.setTransform(r,0,0,r,0,0);g.clearRect(0,0,w,260);g.font='12px system-ui';return g}
+function axes(g,W,H){g.strokeStyle=css('--line');g.lineWidth=1;g.beginPath();g.moveTo(36,6);g.lineTo(36,H-24);g.lineTo(W-8,H-24);g.stroke()}
+function list(){const tau=+$('tau').value,dis=$('dis').checked;
+ let a=[...M.te].sort((p,q)=>q.p-p.p);if(dis)a=a.filter(e=>(e.p>=tau?1:0)!==e.base);a=a.slice(0,80);
+ $('ev').tBodies[0].innerHTML=a.map(e=>`<tr tabindex="0" data-i="${e.id}" class="${sel&&sel.id===e.id?'sel':''}"><td>${e.id}</td><td>${pct(e.p)}</td><td>${e.base?'manoeuvre':'no action'}</td><td><span class="b ${e.p>=tau?'m':'n'}">${e.p>=tau?'manoeuvre':'no manoeuvre'}</span></td><td class="${e.y?'bad':'good'}">${e.tl.toFixed(1)} ${e.y?'dangerous':'harmless'}</td></tr>`).join('');
+ if(!sel||!M.te.includes(sel))sel=a[0]||M.te[0];draw()}
+function draw(){const e=sel;if(!e)return;const tau=+$('tau').value,go=e.p>=tau,cut=+$('cut').value;
+ const cf=go?e.p:1-e.p,d=Math.abs(Math.log(e.p/(1-e.p))-Math.log(tau/(1-tau))),lv=d>2?'High':d>.8?'Medium':'Low';
+ $('rec').innerHTML=`<div class="rec"><span class="b ${go?'m':'n'}">${go?'MANOEUVRE':'NO MANOEUVRE'}</span><span>${e.id}</span><span class="mu">P(dangerous) ${pct(e.p)}</span></div>
+ <div class="rec"><span class="mu">Confidence: <b style="color:var(--tx)">${lv}</b> (${pct(cf)} for this call)</span><div class="bar"><i style="width:${cf*100}%"></i></div></div>
+ <div class="mu" style="font-size:13px;margin-bottom:6px">${e.used} usable CDMs · latest usable estimate 10^${e.last.toFixed(1)} · truth: ${e.y?'dangerous':'harmless'}${(go!==!!e.y)?` · <b class="bad">${go?'needless manoeuvre':'missed danger'}</b>`:' · <b class="good">correct call</b>'}</div>`;
+ const cv=$('cv2'),g=setup(cv),W=cv.clientWidth,H=260,t0=Math.max(...e.c.map(x=>x.t))+.2;
+ const X=t=>36+(W-50)*(1-t/t0),Y=v=>8+(H-36)*(-1.5-v)/10.5;axes(g,W,H);
+ g.fillStyle=css('--mu');for(let v=-2;v>=-12;v-=2){g.fillText(v,8,Y(v)+4);g.strokeStyle=css('--line');g.globalAlpha=.4;g.beginPath();g.moveTo(36,Y(v));g.lineTo(W-8,Y(v));g.stroke();g.globalAlpha=1}
+ g.strokeStyle=css('--rd');g.setLineDash([6,4]);g.beginPath();g.moveTo(36,Y(M.thr));g.lineTo(W-8,Y(M.thr));g.stroke();g.fillText('danger line',W-80,Y(M.thr)-4);
+ g.strokeStyle=css('--gn');g.beginPath();g.moveTo(36,Y(e.tl));g.lineTo(W-8,Y(e.tl));g.stroke();g.setLineDash([]);
+ g.strokeStyle=css('--am');g.beginPath();g.moveTo(X(cut),8);g.lineTo(X(cut),H-24);g.stroke();g.fillStyle=css('--am');g.fillText('cut-off',X(cut)+4,18);
+ g.fillStyle=css('--mu');g.fillText('days to closest approach: '+t0.toFixed(0)+' → 0',W/2-70,H-6);
+ e.c.forEach(x=>{g.fillStyle=x.t>=cut?css('--cy'):css('--mu');g.beginPath();g.arc(X(x.t),Y(x.r),4,0,7);g.fill()})}
+$('ev').tBodies[0].addEventListener('click',ev=>{const tr=ev.target.closest('tr');if(!tr)return;sel=M.te.find(e=>e.id===tr.dataset.i);list()});
+$('ev').tBodies[0].addEventListener('keydown',ev=>{if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();ev.target.click()}});
+['tau','cost'].forEach(i=>$(i).addEventListener('input',refresh));$('dis').onchange=refresh;
+['thr','cut','bal'].forEach(i=>$(i).addEventListener('change',fit));$('go').onclick=fit;
+$('seed').onclick=()=>{seedV=Math.floor(Math.random()*1e6);D=gen(seedV);sel=null;fit()};
+$('auto').onclick=()=>{const y=M.tr.map(e=>e.y);let best=.5,bc=1e9;for(let t=.02;t<=.98;t+=.01){const c=conf(y,M.tr.map(e=>e.p>=t?1:0)),v=c.fn*K()+c.fp;if(v<bc){bc=v;best=t}}$('tau').value=best.toFixed(2);refresh()};
+addEventListener('resize',()=>{if(M){sweep(+$('tau').value);draw()}});
+D=gen(seedV);fit();
+</script></body></html>
